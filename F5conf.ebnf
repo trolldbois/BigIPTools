@@ -1,0 +1,62 @@
+(** Author: agrebin *)
+(** EBNF rules for parsing with grako F5 configs **)
+
+keyword  =  ?/[a-zA-z#]*/?;
+name     = /[a-zA-Z0-9._-]*/ ; 
+ip       = /(?:[0-9]{1,3}\.){3}[0-9]{1,3}/ ;
+net      = ip '/' name ;
+integer  = /[0-9]*/ ;
+port     = /[0-9]*/ ;
+param    = /[\*\:]/ ;
+string   = '"' /[^"]*/ '"';
+genblock = '{' /[.]*/ '}';
+operator = ?/[\]\:\>\<\=()/]/?;
+expr     = '(' {keyword} ')'  ;
+ipparm   = net | ip ;
+ipport   = ip:ip ':' port:name;
+whatever = /[^{}\n]*/ ;
+qualifier= /[mMkKGg]/ ;
+
+node            = 'node' ipparm [block];
+nat             = 'nat' [name] 'to' [name] [block]; 
+rule            = 'rule' [name] [ruleblock];
+oneconnect      = 'profile oneconnect' oneconnect_name:[name] profiledef:[profiledef];
+
+pooldef          = 'pool' pool_name:name pool_def:[ pblock ];   (* NOTE IT USES PooLBlock *)
+vip              = 'virtual' vip_name:[name] vip_block:[vip_block] ;
+vipdefault       = 'virtual address any' {block};
+
+maxsize          = 'max size' size:integer q:[qualifier];
+defaults         = 'defaults from' from:[name];
+profiledef       = '{' {profile_def_cmd} '}';
+profile_def_cmd  = defaults:defaults | maxsize:maxsize | whatever ;
+
+
+
+generic_command  =  whatever {whatever} {ruleblock};
+commands         =  pool:pooldef | vip: vip | oneconnect:oneconnect | generic_command ;
+rulecmd          =  whatever [ ruleblock ] ;
+
+poolcmd          =  cmd:members | whatever ;
+pool_call        = 'pool' pool:name;
+dest             = 'destination' ipport:ipport;
+
+vip_profiles       = 'profiles' [ profile_block ] ;
+profile_call       = profile+:whatever [ profile_block_parm ] ;
+profile_block      = '{' {profile_call} '}';
+profile_block_parm = '{' {whatever} '}' ;
+
+vipcmd           = pool_call:pool_call | dest:dest | profiles:vip_profiles | rulecmd | whatever  ;
+
+
+member       =  member_data+:ipport [mblock_parm];
+mblock_parm  =  '{' [keyword] {name}  '}' ;
+mblock       =  '{' {member:member}  '}' ;
+members      =  'members' members:[member] members:[mblock];
+
+pblock      = '{' {poolcmd}         '}';
+block       = '{' {generic_command} '}' ;
+ruleblock   = '{' {rulecmd}         '}';
+vip_block   = '{' {vipcmd}          '}'; 
+
+file       = @:{ commands }  ;
