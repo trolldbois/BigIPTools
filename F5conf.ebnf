@@ -1,9 +1,12 @@
 (** Author: agrebin *)
 (** EBNF rules for parsing with grako F5 configs **)
 
+(** EBNF rules for parsing with tatsu **)
+
 keyword  =  ?/[a-zA-z#]*/?;
 name     = /[a-zA-Z0-9._-]*/ ; 
-ip       = /(?:[0-9]{1,3}\.){3}[0-9]{1,3}/ ;
+ip       = /(?:[0-9]{1,3}\.){3}[0-9]{1,3}/ | 'any';
+mask_ip  = ip | 'none' ;
 net      = ip '/' name ;
 integer  = /[0-9]*/ ;
 port     = /[0-9]*/ ;
@@ -14,49 +17,71 @@ operator = ?/[\]\:\>\<\=()/]/?;
 expr     = '(' {keyword} ')'  ;
 ipparm   = net | ip ;
 ipport   = ip:ip ':' port:name;
+hostname = /[a-zA-Z0-9.-]*/ ;
+hostport = hostname:hostname ':' port:name;
 whatever = /[^{}\n]*/ ;
 qualifier= /[mMkKGg]/ ;
 
-node            = 'node' ipparm [block];
+node            = 'node' node:ipparm ~ [block];
 nat             = 'nat' [name] 'to' [name] [block]; 
 rule            = 'rule' [name] [ruleblock];
-oneconnect      = 'profile oneconnect' oneconnect_name:[name] profiledef:[profiledef];
+oneconnect      = 'profile oneconnect' ~ oneconnect_name:[name] profiledef:[profiledef];
 
-pooldef          = 'pool' pool_name:name pool_def:[ pblock ];   (* NOTE IT USES PooLBlock *)
-vip              = 'virtual' vip_name:[name] vip_block:[vip_block] ;
-vipdefault       = 'virtual address any' {block};
+pooldef          = ['ltm'] 'pool' ~ pool_name:name pool_def:[ pblock ];   (* NOTE IT USES PooLBlock *)
+snatpooldef      = ['ltm'] 'snatpool' ~ snatpool_name:name snatpool_def:[ spblock ];
+vaddr            = ['ltm'] 'virtual address' vaddr_ip:ip ~ vaddr_block:vaddr_block; # 'any' can be an ip
+# vipdefault       = ['ltm'] 'virtual address any' {block};
+vip              = ['ltm'] 'virtual' vip_name:name ~ vip_block:[vip_block];
+classes          = 'class' classes:name class_block:class_block;
+self             = 'self' self:name ~ self_block:self_block;
 
 maxsize          = 'max size' size:integer q:[qualifier];
 defaults         = 'defaults from' from:[name];
 profiledef       = '{' {profile_def_cmd} '}';
 profile_def_cmd  = defaults:defaults | maxsize:maxsize | whatever ;
 
-
-
 generic_command  =  whatever {whatever} {ruleblock};
-commands         =  pool:pooldef | vip: vip | oneconnect:oneconnect | generic_command ;
 rulecmd          =  whatever [ ruleblock ] ;
+commands         =  pool:pooldef | snatpool:snatpooldef | vaddr:vaddr | vip:vip | oneconnect:oneconnect | node:node | classes:classes | self:self | rulecmd ;
 
-poolcmd          =  cmd:members | whatever ;
-pool_call        = 'pool' pool:name;
-dest             = 'destination' ipport:ipport;
+poolcmd          =  cmd+:members | rulecmd ;
+pool_call        = 'pool' ~ pool:name;
+snatpoolcmd      =  cmd+:snat_members | rulecmd ;
+snatpool_call    = 'snatpool' ~ pool:name;
+dest             = 'destination' ~ (ipport:ipport | 'any:any');
+vlans            = 'vlans' {name} ('enable'|'disable');
+mask             = 'mask' mask:mask_ip ;
+netmask          = 'netmask' ~ mask:mask_ip ;
 
-vip_profiles       = 'profiles' [ profile_block ] ;
+vip_profiles       = 'profiles' ~ [ profile_block ] ;
 profile_call       = profile+:whatever [ profile_block_parm ] ;
 profile_block      = '{' {profile_call} '}';
 profile_block_parm = '{' {whatever} '}' ;
 
-vipcmd           = pool_call:pool_call | dest:dest | profiles:vip_profiles | rulecmd | whatever  ;
+vipcmd       = pool_call:pool_call | snatpool_call:snatpool_call | dest:dest | profiles:vip_profiles | vlans:vlans | mask:mask | rulecmd | whatever  ;
+vaddrcmd     = mask:mask | rulecmd | whatever  ;
+selfcmd      = netmask:netmask | rulecmd | whatever  ; # TODO vlan
 
 
-member       =  member_data+:ipport [mblock_parm];
+address      = 'address' ~ ip:ip ;
+hostblock    = hostport '{' { address | whatever }  '}' ;
+member       =  (member_data+:ipport [mblock_parm]) | (member_data+:hostblock);
 mblock_parm  =  '{' [keyword] {name}  '}' ;
-mblock       =  '{' {member:member}  '}' ;
-members      =  'members' members:[member] members:[mblock];
+mblock       =  '{' {member+:member}  '}' ; #keep all members in list, always
+members      =  /members?/ members+:[member] members+:[mblock] ;
+
+snat_mblock       =  '{' {member:ip}  '}' ;
+snat_members      =  'members' members:snat_mblock ;
+
+classcmd     = 'host' host:ip | 'network' network:net [mask] | whatever;
 
 pblock      = '{' {poolcmd}         '}';
-block       = '{' {generic_command} '}' ;
+spblock     = '{' {snatpoolcmd}     '}';
+block       = '{' {generic_command} '}';
 ruleblock   = '{' {rulecmd}         '}';
 vip_block   = '{' {vipcmd}          '}'; 
+vaddr_block = '{' {vaddrcmd}        '}';
+class_block = '{' '{' {classcmd}    '}' '}';
+self_block      = '{' {selfcmd}      '}';
 
 file       = @:{ commands }  ;
